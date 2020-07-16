@@ -1,0 +1,110 @@
+description: |-
+  ---
+  # AWS AppStream Image Builder Automation
+  This automation is intended to be used to programmatically create an image builder, install applications, capture image and terminate it once it is complete.
+schemaVersion: '0.3'
+parameters:
+  Name:
+    type: String
+    default: ImageBuilder
+  IamRoleArn:
+    type: String
+  InstanceType:
+    type: String
+    default: stream.standard.medium
+  SecurityGroupID:
+    type: StringList
+  SubnetId:
+    type: StringList
+mainSteps:
+  - name: DescribeDirectoryConfig
+    action: 'aws:executeAwsApi'
+    inputs:
+      Service: appstream
+      Api: DescribeDirectoryConfigs
+    outputs:
+    - Name: directoryName
+      Selector: "$.DirectoryConfigs[0].DirectoryName"
+      Type: String
+    - Name: ou
+      Selector: "$.DirectoryConfigs[0].OrganizationalUnitDistinguishedNames[0]"
+      Type: String
+  - name: ImageBuilderLaunch
+    action: 'aws:executeAwsApi'
+    inputs:
+      Service: appstream
+      Api: CreateImageBuilder
+      Name: '{{Name}}'
+      EnableDefaultInternetAccess: true
+      InstanceType: '{{InstanceType}}'
+      ImageName: 'AppStream-WinServer2019-04-22-2020'
+      VpcConfig:
+         SecurityGroupIds: '{{SecurityGroupID}}'
+         SubnetIds: '{{SubnetId}}'
+      DomainJoinInfo:
+         DirectoryName: '{{DescribeDirectoryConfig.directoryName}}'
+         OrganizationalUnitDistinguishedName: '{{DescribeDirectoryConfig.ou}}'
+    outputs:
+      - Name: builderName
+        Selector: "$.ImageBuilder.Name"
+        Type: String
+    description: This step will execute the CreateImageBuilder API to create a new Image Builder.
+  - name: ImageBuilderWaitCondition
+    action: 'aws:waitForAwsResourceProperty'
+    timeoutSeconds: 1200
+    inputs:
+      Service: appstream
+      Api: DescribeImageBuilders
+      Names:
+      - '{{ImageBuilderLaunch.builderName}}'
+      PropertySelector: "$.ImageBuilders[0].State"
+      DesiredValues:
+      - RUNNING
+  - name: DescribeImageBuilder
+    action: 'aws:executeAwsApi'
+    inputs:
+      Service: appstream
+      Api: DescribeImageBuilders
+      Names:
+      - '{{ImageBuilderLaunch.builderName}}'
+    outputs:
+      - Name: builderIp
+        Selector: "$.ImageBuilders[0].NetworkAccessConfiguration.EniPrivateIpAddress"
+        Type: String
+  - name: CreateBuilderIpParameter
+    action: 'aws:executeAwsApi'
+    inputs:
+      Service: ssm
+      Api: PutParameter
+      Name: ImageBuilderIP
+      Description: 'This is the IP Adress if the Image builder that is launched by SSM.'
+      Overwrite: true
+      Type: String
+      Value: '{{DescribeImageBuilder.builderIp}}'
+  - name: ImageBuilderConfig
+    action: 'aws:invokeLambdaFunction'
+    maxAttempts: 2
+#    timeoutSeconds: 180
+    onFailure: Abort
+    inputs:
+      FunctionName: choco-install
+  - name: TempWaitCondition
+    action: 'aws:sleep'
+    inputs:
+      Duration: PT20M
+  - name: StopImageBuilder
+    action: 'aws:executeAwsApi'
+    inputs:
+      Service: appstream
+      Api: StopImageBuilder
+      Name: '{{ImageBuilderLaunch.builderName}}'
+  - name: WaitForBuilderStop
+    action: 'aws:sleep'
+    inputs:
+      Duration: PT2M
+  - name: ImageBuilderTermination
+    action: 'aws:executeAwsApi'
+    inputs:
+      Service: appstream
+      Api: DeleteImageBuilder
+      Name: '{{ImageBuilderLaunch.builderName}}'
