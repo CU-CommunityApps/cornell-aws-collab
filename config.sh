@@ -1,5 +1,5 @@
 export APPLICATION="CornellAwsCollab"
-export DOMAIN_NAME="example.com"
+export DOMAIN_NAME="aws-collab.martysullivan.com"
 export GITHUB_REPO="https://github.com/CU-CommunityApps/cornell-aws-collab.git"
 export ADMIN_EMAIL=""
 export ADMIN_PHONE=""
